@@ -13,7 +13,7 @@ extern "C" {
 #define VIDEO_UDP_PORT 12346
 #define MAX_FRAME_SIZE 32768  
 #define VIDEO_QUALITY FRAMESIZE_VGA  // 640x480
-#define JPEG_QUALITY 20  // JPEG quality (0-63, lower is higher quality)
+#define JPEG_QUALITY 30  // JPEG quality (0-63, lower is higher quality)
 
 // Video packet types
 #define VIDEO_PACKAGE 1
