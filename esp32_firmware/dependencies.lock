@@ -1,0 +1,63 @@
+dependencies:
+  espressif/esp-dsp:
+    dependencies: []
+    source:
+      path: /home/sergio/tfg_project/esp32_firmware/managed_components/espressif__esp-dsp
+      type: local
+    version: 1.4.12
+  espressif/esp32-camera:
+    dependencies: []
+    source:
+      path: /home/sergio/tfg_project/esp32_firmware/managed_components/espressif__esp32-camera
+      type: local
+    version: 2.1.2
+  espressif/esp_jpeg:
+    component_hash: defb83669293cbf86d0fa86b475ba5517aceed04ed70db435388c151ab37b5d7
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.3.1
+  espressif/jsmn:
+    dependencies: []
+    source:
+      path: /home/sergio/tfg_project/esp32_firmware/managed_components/espressif__jsmn
+      type: local
+    version: 1.1.0
+  espressif/mdns:
+    dependencies: []
+    source:
+      path: /home/sergio/tfg_project/esp32_firmware/managed_components/espressif__mdns
+      type: local
+    version: 1.8.2
+  espressif/nghttp:
+    dependencies: []
+    source:
+      path: /home/sergio/tfg_project/esp32_firmware/managed_components/espressif__nghttp
+      type: local
+    version: 1.65.0
+  espressif/zlib:
+    dependencies: []
+    source:
+      path: /home/sergio/tfg_project/esp32_firmware/managed_components/espressif__zlib
+      type: local
+    version: 1.3.1
+  idf:
+    source:
+      type: idf
+    version: 5.4.0
+direct_dependencies:
+- espressif/esp-dsp
+- espressif/esp32-camera
+- espressif/esp_jpeg
+- espressif/jsmn
+- espressif/mdns
+- espressif/nghttp
+- espressif/zlib
+- idf
+manifest_hash: 168e1bde16da4eab726fe69db04b1bd1a9006ce928fb4f8e7ea217dcdbb5183b
+target: esp32s3
+version: 2.0.0

@@ -1,0 +1,5 @@
+# This is a minimal Kconfig.projbuild file
+# Add any project-specific configuration options here if needed
+
+# Currently no custom configuration options are defined
+# This file exists to satisfy the build system requirements
