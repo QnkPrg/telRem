@@ -10,7 +10,7 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 #define WIFI_CONNECT_SUCCESS_SENT BIT2
-
+#define WIFI_PROVISIONING_DONE_BIT BIT3
 /**
  * @brief WiFi credentials structure
  */

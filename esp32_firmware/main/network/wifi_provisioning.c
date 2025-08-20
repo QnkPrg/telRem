@@ -33,7 +33,7 @@ typedef struct {
 } prov_state_t;
 
 static prov_state_t current_state = {
-    .max_connection_attempts = 5,
+    .max_connection_attempts = 3,
     .connection_attempts = 0,
     .connection_failed = false,
     .has_credentials = false
@@ -57,9 +57,6 @@ void wifi_event_handler(void* arg, esp_event_base_t event_base,
                     // Lost connection reseting.
                     esp_restart();
                 }
-                
-                wifi_event_sta_disconnected_t* disconnected = (wifi_event_sta_disconnected_t*) event_data;
-                ESP_LOGI(TAG, "Disconnected from AP. Reason: %d", disconnected->reason);
                 
                 current_state.wifi_connected = false;
                 
@@ -115,7 +112,7 @@ void wifi_event_handler(void* arg, esp_event_base_t event_base,
         // Keep AP active for a few seconds to allow client to get success notification
         if (server) {
             ESP_LOGI(TAG, "WiFi connected successfully - keeping AP active for client notification");
-            ESP_LOGI(TAG, "AP will stop automatically in 10 seconds");
+            xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
         }
         // Create a task to stop the provisioning server after delay
         xTaskCreate(delayed_provisioning_cleanup, "prov_cleanup", 2048, NULL, 5, NULL);
@@ -274,7 +271,7 @@ void delayed_provisioning_cleanup(void *pvParameters)
     esp_wifi_set_mode(WIFI_MODE_STA);
     
     // Signal main application to continue execution
-    xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+    xEventGroupSetBits(wifi_event_group, WIFI_PROVISIONING_DONE_BIT);
 
     // Clear provisioning state
     current_state.provisioning_complete = false;
@@ -663,7 +660,7 @@ void start_wifi_provisioning(void)
 
     /* Wait for Wi-Fi connection */
     ESP_LOGI(TAG, "Waiting for WiFi connection...");
-    xEventGroupWaitBits(wifi_event_group, WIFI_CONNECTED_BIT, false, true, portMAX_DELAY);
+    xEventGroupWaitBits(wifi_event_group, WIFI_PROVISIONING_DONE_BIT, false, true, portMAX_DELAY);
     ESP_LOGI(TAG, "WiFi connected!");
 }
 
