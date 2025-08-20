@@ -3,6 +3,7 @@
 ```
 tfg_project/
 ├── adf_components/           # Custom ESP-ADF audio streaming components
+├── docs/                     # Project documentation
 ├── esp32_firmware/           # ESP32 firmware source code
 │   ├── config/               # Build configuration files
 │   └── main/                 # Main application source code
