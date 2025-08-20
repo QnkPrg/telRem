@@ -1,0 +1,75 @@
+# ESP32 Audio Communication Project .gitignore
+
+# Audio files
+*.wav
+*.mp3
+*.flac
+*.aac
+
+# vscode settings
+.vscode/
+
+# devcontainer
+.devcontainer/
+
+# Managed_components
+esp32_firmware/managed_components/
+
+# Build directories
+esp32_firmware/build/*
+
+# Build outputs
+build_output/build/
+build_output/buildOut.*
+build_output/dependencies.lock
+
+# ESP-IDF build artifacts
+sdkconfig.old
+*.bin
+*.elf
+*.map
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.coverage
+.pytest_cache/
+
+# IDE and editor files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Audio test recordings (keep examples)
+audio_recordings/
+recorded_*.wav
+test_audio_*.wav
