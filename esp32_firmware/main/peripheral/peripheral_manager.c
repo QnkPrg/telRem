@@ -29,22 +29,6 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
         if (button_id < INPUT_KEY_NUM) {
             button_press_start_time[button_id] = xTaskGetTickCount();
             button_pressed[button_id] = true;
-            ESP_LOGI(TAG, "Button %d pressed - timing started", button_id);
-        }
-    }
-    else if (evt->type == INPUT_KEY_SERVICE_ACTION_PRESS) {
-        // Long press detected
-        if (button_id < INPUT_KEY_NUM && button_pressed[button_id]) {
-            uint32_t now = xTaskGetTickCount();
-            uint32_t press_duration = (now - button_press_start_time[button_id]) * portTICK_PERIOD_MS;
-
-            if (button_id == INPUT_KEY_USER_ID_PLAY && press_duration >= BUTTON_PRESS_DURATION_MS) {
-                ESP_LOGI(TAG, "WiFi reset button released - resetting WiFi provisioning");
-                // NON RETURNING: Trigger WiFi reset
-                // This will clear WiFi credentials and restart the device
-                trigger_wifi_reset();
-                
-            }
         }
     }
     else if (evt->type == INPUT_KEY_SERVICE_ACTION_CLICK_RELEASE || evt->type == INPUT_KEY_SERVICE_ACTION_PRESS_RELEASE) {
@@ -53,8 +37,6 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
             uint32_t now = xTaskGetTickCount();
             uint32_t press_duration = (now - button_press_start_time[button_id]) * portTICK_PERIOD_MS;
             button_pressed[button_id] = false;
-            
-            ESP_LOGI(TAG, "Button %d released after %lu ms", button_id, press_duration);
 
             switch(button_id) {
                 case INPUT_KEY_USER_ID_REC:
@@ -65,8 +47,17 @@ static esp_err_t input_key_service_cb(periph_service_handle_t handle, periph_ser
                         last_doorbell_ring_time = xTaskGetTickCount();
                     }
                     break;
+                case INPUT_KEY_USER_ID_PLAY:
+                    if (press_duration >= BUTTON_PRESS_DURATION_MS) {
+                        ESP_LOGI(TAG, "WiFi reset button released - resetting WiFi provisioning");
+                        // NON RETURNING: Trigger WiFi reset
+                        // This will clear WiFi credentials and restart the device
+                        trigger_wifi_reset();
+                    } else {
+                        ESP_LOGI(TAG, "Short press on WiFi reset button - no action taken");
+                    }
+                    break;
                 default:
-                    ESP_LOGW(TAG, "Button %d released but no action assigned", button_id);
                     break;
             }
         }
