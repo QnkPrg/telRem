@@ -22,11 +22,7 @@ typedef enum {
     CMD_TALK_ENDED = 4,
     CMD_TALK_DID_NOT_END = 5,
     CMD_DOORBELL_RING = 6,
-    CMD_OPEN_DOOR = 7,
-    CMD_ACTIVATE_FEC = 8,
-    CMD_DEACTIVATE_FEC = 9,
-    CMD_FEC_ACTIVATED = 10,
-    CMD_FEC_DEACTIVATED = 11
+    CMD_OPEN_DOOR = 7
 } device_command_t;
 
 /**
@@ -126,12 +122,12 @@ bool request_talk_permission(int client_index);
 bool release_talk_permission(int client_index);
 
 /**
- * @brief Start audio pipelines for a specific client
+ * @brief Start audio and video for a specific client
  * 
  * @param client_index Index of the client
  * @return ESP_OK on success
  */
-esp_err_t start_audio_pipelines_for_client(int client_index);
+esp_err_t start_audio_and_video_for_client(int client_index);
 
 /**
  * @brief Clean up a client connection

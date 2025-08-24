@@ -13,7 +13,7 @@ extern "C" {
 #define VIDEO_UDP_PORT 12346
 #define MAX_FRAME_SIZE 32768  
 #define VIDEO_QUALITY FRAMESIZE_VGA  // 640x480
-#define JPEG_QUALITY 30  // JPEG quality (0-63, lower is higher quality)
+#define JPEG_QUALITY 40  // JPEG quality (0-63, lower is higher quality)
 
 // Video packet types
 #define VIDEO_PACKAGE 1
@@ -54,6 +54,7 @@ extern "C" {
 // Video manager info structure
 typedef struct {
     bool is_streaming;
+    bool stop_requested;
     in_addr_t remote_addr;
     int udp_socket;
     struct sockaddr_in dest_addr;
@@ -84,12 +85,6 @@ esp_err_t video_manager_stop_streaming(void);
  * @return ESP_OK on success, ESP_FAIL on error
  */
 esp_err_t video_manager_send_frame(void);
-
-/**
- * @brief Get video streaming status
- * @return true if streaming, false otherwise
- */
-bool video_manager_is_streaming(void);
 
 /**
  * @brief Cleanup video manager resources

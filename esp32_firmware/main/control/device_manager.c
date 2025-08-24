@@ -20,8 +20,6 @@ typedef struct {
     int socket;
     in_addr_t ip_address;
     bool is_connected;
-    bool fec_enabled;  // Forward Error Correction enabled
-    bool video_enabled;  // Video streaming enabled
     TaskHandle_t task_handle;
 } tcp_client_t;
 
@@ -95,21 +93,6 @@ bool release_talk_permission(int client_index) {
     xSemaphoreTake(talker_mutex, portMAX_DELAY);
         if (active_talker_index == client_index) {
             active_talker_index = INACTIVE_CLIENT_INDEX;
-            // Stop and cleanup audio pipelines
-            
-            ESP_LOGI(TAG, "Stopping audio pipelines for client %d", client_index);
-
-            // Cleanup both pipelines in one call
-            audio_pipeline_cleanup(&audio_info.audio_pipelines_info);
-            
-            // Stop video streaming
-            if (video_manager_is_streaming()) {
-                video_manager_stop_streaming();
-                xSemaphoreTake(clients_mutex, portMAX_DELAY);
-                    clients[client_index].video_enabled = false;
-                xSemaphoreGive(clients_mutex);
-                ESP_LOGI(TAG, "Video streaming stopped for client %d", client_index);
-            }
             
             // Reset audio state
             audio_info.active_client_index = INACTIVE_CLIENT_INDEX;
@@ -121,9 +104,21 @@ bool release_talk_permission(int client_index) {
     return released;
 }
 
-// Start audio pipelines for a specific client
-esp_err_t start_audio_pipelines_for_client(int client_index) {
+void stop_audio_and_video(void) {
+            
+    // Stop and cleanup audio pipelines
+    ESP_LOGI(TAG, "Stopping audio pipelines");
+    audio_pipeline_cleanup(&audio_info.audio_pipelines_info);
     
+    // Stop video streaming
+    video_manager_stop_streaming();
+    ESP_LOGI(TAG, "Video streaming stopped");
+
+}
+
+// Start audio and video for a specific client
+esp_err_t start_audio_and_video_for_client(int client_index) {
+
     // Get client IP address
     xSemaphoreTake(clients_mutex, portMAX_DELAY);
         in_addr_t client_ip = clients[client_index].ip_address;
@@ -157,16 +152,12 @@ esp_err_t start_audio_pipelines_for_client(int client_index) {
     // Start video streaming automatically with audio
     esp_err_t video_ret = video_manager_start_streaming(client_ip);
     if (video_ret == ESP_OK) {
-        xSemaphoreTake(clients_mutex, portMAX_DELAY);
-            clients[client_index].video_enabled = true;
-        xSemaphoreGive(clients_mutex);
         ESP_LOGI(TAG, "Video streaming started for client %d", client_index);
     } else {
-        ESP_LOGW(TAG, "Failed to start video streaming for client %d, continuing with audio only", client_index);
+        ESP_LOGW(TAG, "Failed to start video streaming for client %d", client_index);
+        audio_pipeline_cleanup(&audio_info.audio_pipelines_info);
+        return ESP_FAIL;
     }
-    
-    // Set active state
-    audio_info.active_client_index = client_index;
 
     ESP_LOGI(TAG, "Audio pipelines started successfully for client %d (IP: %s)", client_index, ip_str);
     return ESP_OK;
@@ -174,18 +165,14 @@ esp_err_t start_audio_pipelines_for_client(int client_index) {
 
 // Clean up a client connection
 void cleanup_client(int client_index) {
+
+    xSemaphoreTake(talker_mutex, portMAX_DELAY);
+        if (active_talker_index == client_index) {
+            stop_audio_and_video();
+        }
+    xSemaphoreGive(talker_mutex);
     
     release_talk_permission(client_index);
-
-    // Stop video if this client had it enabled
-    xSemaphoreTake(clients_mutex, portMAX_DELAY);
-        bool had_video = clients[client_index].video_enabled;
-    xSemaphoreGive(clients_mutex);
-    
-    if (had_video && video_manager_is_streaming()) {
-        video_manager_stop_streaming();
-        ESP_LOGI(TAG, "Video streaming stopped for disconnecting client %d", client_index);
-    }
 
     xSemaphoreTake(clients_mutex, portMAX_DELAY);        
         close(clients[client_index].socket);
@@ -193,8 +180,6 @@ void cleanup_client(int client_index) {
         clients[client_index].task_handle = NULL;
         clients[client_index].socket = 0;
         clients[client_index].ip_address = 0;
-        clients[client_index].fec_enabled = false;
-        clients[client_index].video_enabled = false;
         
         ESP_LOGI(TAG, "Client %d cleaned up", client_index);
     xSemaphoreGive(clients_mutex);
@@ -208,7 +193,7 @@ void handle_client_command(int client_index, int command) {
                 // Grant permission and start audio with this client's IP
                 uint32_t response = CMD_GRANT_TALK;
                 send(clients[client_index].socket, &response, sizeof(response), 0);
-                start_audio_pipelines_for_client(client_index);
+                start_audio_and_video_for_client(client_index);
             } else {
                 uint32_t response = CMD_DENY_TALK;
                 send(clients[client_index].socket, &response, sizeof(response), 0);
@@ -220,6 +205,7 @@ void handle_client_command(int client_index, int command) {
             if(release_talk_permission(client_index)) {
                 uint32_t response = CMD_TALK_ENDED;
                 send(clients[client_index].socket, &response, sizeof(response), 0);
+                stop_audio_and_video();
             }
             else {
                 ESP_LOGW(TAG, "Failed to release talk permission for client %d", client_index);
@@ -236,13 +222,6 @@ void handle_client_command(int client_index, int command) {
                 send(clients[client_index].socket, &response, sizeof(response), 0);
             }
             ESP_LOGI(TAG, "Door opened by client %d, UART message sent", client_index);
-            break;
-        case CMD_ACTIVATE_FEC:
-            xSemaphoreTake(clients_mutex, portMAX_DELAY);
-                clients[client_index].fec_enabled = true;
-            xSemaphoreGive(clients_mutex);
-            
-            ESP_LOGI(TAG, "FEC activated for client %d", client_index);
             break;
         default:
             ESP_LOGW(TAG, "Unknown command %d from client %d", command, client_index);
@@ -291,8 +270,6 @@ bool add_new_client(int client_sock, in_addr_t client_ip) {
                 clients[i].socket = client_sock;
                 clients[i].ip_address = client_ip;
                 clients[i].is_connected = true;
-                clients[i].fec_enabled = false;
-                clients[i].video_enabled = false;
                 
                 // Create dedicated task for this client
                 char task_name[32];

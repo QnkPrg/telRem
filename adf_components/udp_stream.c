@@ -11,7 +11,6 @@
 #include "udp_stream.h"
 
 #define AUDIO_PACKAGE 0
-#define FEC_PACKAGE 1
 
 // UDP Stream packet header structure:
 // 1 Byte for package type
@@ -34,6 +33,8 @@
 #define UDP_HEADER_TIMESTAMP_SIZE   8
 #define UDP_HEADER_LENGTH_SIZE      2
 
+#define MAX_UDP_PACKET_SIZE 1400  // MTU-safe packet size
+
 static const char *TAG = "udp_STREAM";
 
 typedef struct udp_stream {
@@ -41,7 +42,6 @@ typedef struct udp_stream {
     int sock; // Socket for UDP communication
     struct sockaddr_in dest_addr; // Destination address for UDP stream
     bool is_open; // Flag to indicate if the stream is open
-    int buffer_len; // Buffer length for the stream
 } udp_stream_t;
 
 static esp_err_t _udp_open(audio_element_handle_t self)
@@ -117,6 +117,7 @@ static int _udp_stream_read(audio_element_handle_t self, char *buffer, int len, 
     udp_stream_t *udp = (udp_stream_t *)audio_element_getdata(self);
     static int pckg_count = 0;
     struct timeval timeout;
+    uint8_t recv_buffer[MAX_UDP_PACKET_SIZE] = {0};
     
     if (!udp->is_open) {
         ESP_LOGW(TAG, "UDP stream not open");
@@ -129,7 +130,7 @@ static int _udp_stream_read(audio_element_handle_t self, char *buffer, int len, 
 
     if (ticks_to_wait == portMAX_DELAY) {
         timeout.tv_sec = 0;
-        timeout.tv_usec = 100000; // 100ms default timeout to prevent indefinite blocking
+        timeout.tv_usec = 25000; // Reduce to 25ms for faster response
     } 
     else {
         uint32_t timeout_ms = ticks_to_wait * portTICK_PERIOD_MS;
@@ -138,25 +139,42 @@ static int _udp_stream_read(audio_element_handle_t self, char *buffer, int len, 
     }
     setsockopt(udp->sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     
-    int ret = recvfrom(udp->sock, buffer, len, 0, NULL, NULL);
-    
+    int ret = recvfrom(udp->sock, recv_buffer, MAX_UDP_PACKET_SIZE, 0, NULL, NULL);
+
     if (ret < 0) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        if (errno == EAGAIN) {
             ESP_LOGD(TAG, "UDP recv timeout");
-            return AEL_IO_TIMEOUT; // Let pipeline retry
+            return AEL_IO_TIMEOUT;
         }
-        ESP_LOGE(TAG, "UDP recv error: errno %d", errno);
+        ESP_LOGE(TAG, "UDP recv error: errno %d (%s)", errno, strerror(errno));
         audio_element_report_status(self, AEL_STATUS_ERROR_INPUT);
         return AEL_IO_FAIL;
     }
+
+    int recv_length = recv_buffer[UDP_HEADER_LENGTH_OFFSET] | 
+                      (recv_buffer[UDP_HEADER_LENGTH_OFFSET + 1] << 8);
+
+    if (recv_length < 0) {
+        ESP_LOGE(TAG, "Invalid packet length: %d", recv_length);
+        audio_element_report_status(self, AEL_STATUS_ERROR_INPUT);
+        return AEL_IO_FAIL;
+    }
+    else if (recv_length > len){
+        // packet is too large for the buffer
+        ESP_LOGE(TAG, "Received packet too large for buffer: %d bytes", recv_length);
+        recv_length = len; // Limit to buffer size
+    }
+
+    memcpy(buffer, recv_buffer + UDP_STREAM_HEADER_LEN, recv_length);
+
     pckg_count++;
     ESP_LOGD(TAG, "UDP packet count: %d", pckg_count);
     
-    if (ret > 0) {
-        audio_element_update_byte_pos(self, ret);
+    if (ret > 0  && recv_length > 0) {
+        audio_element_update_byte_pos(self, recv_length);
     }
     
-    return ret;
+    return recv_length;
 }
 
 static int _udp_stream_write(audio_element_handle_t self, char *buffer, int len, TickType_t ticks_to_wait, void *context)
@@ -177,10 +195,6 @@ static int _udp_stream_write(audio_element_handle_t self, char *buffer, int len,
     else if(len == 0) {
         ESP_LOGD(TAG, "Write received zero-length buffer, ignoring");
         return AEL_IO_OK;
-    }
-    if (len > udp->buffer_len) {
-        ESP_LOGW(TAG, "Write buffer length %d exceeds configured limit %d, truncating", len, udp->buffer_len);
-        len = udp->buffer_len; // Truncate to configured buffer length
     }
 
     // Build audio packet header in separate buffer
@@ -235,9 +249,8 @@ static int _udp_stream_process(audio_element_handle_t self, char *in_buffer, int
     int w_size = 0;
     
     if (r_size == AEL_IO_TIMEOUT) {
-        // Continue with silence during timeout
-        memset(in_buffer, 0x00, in_len);
-        w_size = audio_element_output(self, in_buffer, in_len);
+        // Don't inject silence, just return the timeout status to prevent delay buildup
+        return AEL_IO_TIMEOUT;
     }
     else if(r_size > 0){
         w_size = audio_element_output(self, in_buffer, r_size);
@@ -265,6 +278,10 @@ static esp_err_t _udp_destroy(audio_element_handle_t self)
 
 audio_element_handle_t udp_stream_init(udp_stream_cfg_t *config)
 {
+    if (config == NULL) {
+        ESP_LOGE(TAG, "UDP stream config is NULL");
+        return NULL;
+    }
 
     udp_stream_t *udp = audio_calloc(1, sizeof(udp_stream_t));
     AUDIO_MEM_CHECK(TAG, udp, return NULL);
@@ -273,19 +290,18 @@ audio_element_handle_t udp_stream_init(udp_stream_cfg_t *config)
     udp->sock = -1;
     udp->dest_addr = config->dest_addr;
     udp->is_open = false;
-    udp->buffer_len = config->buffer_len;
 
     audio_element_cfg_t cfg = DEFAULT_AUDIO_ELEMENT_CONFIG();
-    cfg.buffer_len = config->buffer_len;
     if (config -> task_stack < 4096) {
         cfg.task_stack = 4096; // Default minimum stack size
     } else {
         cfg.task_stack = config->task_stack;
     }
+    cfg.buffer_len = config->buffer_len; // Set buffer length for reading/writing
     cfg.open = _udp_open;
     cfg.close = _udp_close;
     cfg.destroy = _udp_destroy;
-    cfg.tag = "udp";
+    cfg.tag = (udp->type == AUDIO_STREAM_WRITER) ? "udp_writer" : "udp_reader";  // More descriptive task names
     cfg.out_rb_size = config->out_rb_size;
     cfg.process = _udp_stream_process;
     if(udp->type == AUDIO_STREAM_WRITER)

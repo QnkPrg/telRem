@@ -141,7 +141,7 @@ def display_frame(frame_data, frame_id):
     # Verify JPEG markers
     if not (frame_data[0] == 0xFF and frame_data[1] == 0xD8 and frame_data[-2] == 0xFF and frame_data[-1] == 0xD9):
         print(f"Frame {frame_id} has invalid JPEG markers, skipping")
-        return
+        return False
     
     # Decode JPEG data
     frame_array = np.frombuffer(frame_data, dtype=np.uint8)
@@ -159,9 +159,11 @@ def display_frame(frame_data, frame_id):
         key = cv2.waitKey(1) & 0xFF
         if key == ord('q') or key == 27:  # 'q' or ESC to quit
             print("User quit detected")
-            return
+            return False
     else:
         print(f"Failed to decode frame {frame_id}")
+
+    return True
 
 def audio_processing_thread(udp_recv, udp_send, esp32_ip, stats, stop_event):
     """Dedicated thread for audio packet processing"""
@@ -186,18 +188,8 @@ def audio_processing_thread(udp_recv, udp_send, esp32_ip, stats, stop_event):
                 if seq is not None and seq + 1 != header_info['sequence']:
                     print(f"Missing audio sequence: expected {seq + 1}, got {header_info['sequence']}")
                 seq = header_info['sequence']
-                payload = audio_data[:CHUNK_SIZE] if audio_data else b''
 
-                if payload:
-                    audio_store[seq] = payload
-
-                # Loopback raw payload only
-                if payload and len(payload) >= CHUNK_SIZE:
-                    udp_send.sendto(payload, (esp32_ip, UDP_PORT))
-                    if stats['audio_packets'] % 100 == 0:
-                        audio_array = np.frombuffer(payload, dtype=np.int16)
-                        audio_level = np.abs(audio_array).mean()
-                        print(f"Audio loopback {stats['audio_packets']} packets, level: {audio_level:.0f}")
+                udp_send.sendto(data, (esp32_ip, UDP_PORT))
 
                 # Prune old entries
                 if len(audio_store) > 2000:

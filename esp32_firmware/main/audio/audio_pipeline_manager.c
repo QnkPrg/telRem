@@ -38,10 +38,9 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
     i2s_cfg_send.std_cfg.clk_cfg.sample_rate_hz = I2S_SAMPLE_RATE;
     i2s_cfg_send.std_cfg.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_16BIT;
     i2s_cfg_send.buffer_len = 324;
-    i2s_cfg_send.out_rb_size = 1024; // Increase buffer to avoid missing data in bad network conditions
+    i2s_cfg_send.out_rb_size = 1024;
     i2s_cfg_send.use_alc = true;      // Enable ALC for volume control
     i2s_cfg_send.volume = 30;         // Boost microphone signal by +40dB for small mic
-    i2s_cfg_send.task_core = 1; // Run on core 1 to avoid conflicts with other tasks
     audio_pipelines_info->i2s_reader = i2s_stream_init(&i2s_cfg_send);
     if (audio_pipelines_info->i2s_reader == NULL) {
         ESP_LOGE(TAG, "Failed to initialize I2S reader");
@@ -58,9 +57,9 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
     udp_stream_cfg_t udp_cfg_send = {
         .type = AUDIO_STREAM_WRITER,
         .dest_addr = dest_addr,
-        .out_rb_size = 2 * 1024,
+        .out_rb_size = 1024,
+        .task_stack = 4096,
         .buffer_len = 324,
-        .task_stack = 4096
     };
     audio_pipelines_info->udp_writer = udp_stream_init(&udp_cfg_send);
     if (audio_pipelines_info->udp_writer == NULL) {
@@ -82,10 +81,10 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
 
     udp_stream_cfg_t udp_cfg_recv = {
         .type = AUDIO_STREAM_READER,
-        .out_rb_size = 2 * 1024,
+        .out_rb_size = 1024,  // Reduce buffer size to minimize latency
         .dest_addr = dest_addr,
-        .buffer_len = 324,
-        .task_stack = 4096
+        .task_stack = 4096,
+        .buffer_len = 1400,
     };
     audio_pipelines_info->udp_reader = udp_stream_init(&udp_cfg_recv);
     if (audio_pipelines_info->udp_reader == NULL) {
@@ -103,7 +102,7 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
     i2s_cfg_recv.use_alc = true; // Enable ALC for volume control
     i2s_cfg_recv.volume = 30;
     i2s_cfg_recv.buffer_len = 324;
-    i2s_cfg_recv.out_rb_size = 1024; // Increase buffer to avoid missing data in bad network conditions
+    i2s_cfg_recv.out_rb_size = 1024;
 
     audio_pipelines_info->i2s_writer = i2s_stream_init(&i2s_cfg_recv);
     if (audio_pipelines_info->i2s_writer == NULL) {

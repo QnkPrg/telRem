@@ -14,8 +14,8 @@ typedef struct {
     audio_stream_type_t type; // Type of the audio stream
     int out_rb_size; // Size of the output ring buffer
     struct sockaddr_in dest_addr; // Destination address for UDP stream
-    int buffer_len; // Buffer length for the stream
     int task_stack; // Stack size for the task
+    int buffer_len; // Length of the buffer for reading/writing
 } udp_stream_cfg_t;
 
 /**

@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <string.h>
 #include <unistd.h>
+#include "esp_heap_caps.h"
 
 static const char *TAG = "VIDEO_MANAGER";
 
@@ -18,21 +19,7 @@ static const char *TAG = "VIDEO_MANAGER";
 // Global video manager state
 static video_manager_info_t video_info = {0};
 static TaskHandle_t video_task_handle = NULL;
-
-/*
- * Video packet format (enhanced for precise frame completion):
- * - 1 byte: package type (VIDEO_PACKAGE = 2)
- * - 4 bytes: frame ID (identifies which frame this packet belongs to)
- * - 8 bytes: timestamp (ms since EPOCH)
- * - 2 bytes: packet length (data size)
- * - 2 bytes: packet sequence (position of this packet within the frame)
- * - 2 bytes: total packets (total number of packets in complete frame)
- * - N bytes: video data (JPEG frame fragment)
- * 
- * Total header: 15 bytes
- * Max packet size: 1400 bytes (MTU-safe)
- * Max data per packet: 1385 bytes (1400 - 15)
- */
+static SemaphoreHandle_t video_info_mutex = NULL;
 
 // ESP32 Korvo 2 v3 camera pin configuration
 #define CAM_PIN_PWDN    -1  // Power down pin
@@ -87,7 +74,7 @@ esp_err_t video_manager_init(void)
         .pixel_format = PIXFORMAT_JPEG,  // JPEG format for compression
         .frame_size = VIDEO_QUALITY,     // VGA resolution
         .jpeg_quality = JPEG_QUALITY,    // JPEG quality
-        .fb_count = 2,                   // Double buffering
+        .fb_count = 2,                   // Double buffering to reduce contention
         .fb_location = CAMERA_FB_IN_PSRAM,
         .grab_mode = CAMERA_GRAB_WHEN_EMPTY
     };
@@ -132,6 +119,15 @@ esp_err_t video_manager_init(void)
     video_info.udp_socket = -1;
     video_info.is_streaming = false;
     video_info.frame_id = 0;
+    video_info.stop_requested = false;
+
+    // Create mutex for video_info protection
+    video_info_mutex = xSemaphoreCreateMutex();
+    if (video_info_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create video_info mutex");
+        esp_camera_deinit();
+        return ESP_FAIL;
+    }
 
     ESP_LOGI(TAG, "ESP32-CAM initialized successfully");
     return ESP_OK;
@@ -142,42 +138,64 @@ static void video_streaming_task(void *param)
 {
     ESP_LOGI(TAG, "Video streaming task started");
     
-    while (video_info.is_streaming) {
-        esp_err_t ret = video_manager_send_frame();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to send video frame");
-            // Continue trying to send frames
-        }
+    bool should_continue = true;
+
+    while (should_continue) {
+        // Check if we should continue streaming (thread-safe)
+        xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+            should_continue = !video_info.stop_requested;
+        xSemaphoreGive(video_info_mutex);
         
-        vTaskDelay(pdMS_TO_TICKS(VIDEO_FRAME_INTERVAL_MS));
+        if (should_continue) {
+            esp_err_t ret = video_manager_send_frame();
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to send video frame");
+                // Continue trying to send frames
+            }
+            
+            vTaskDelay(pdMS_TO_TICKS(VIDEO_FRAME_INTERVAL_MS));
+        }
     }
+
+    xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+        video_info.is_streaming = false;
+        if (video_info.udp_socket >= 0) {
+            close(video_info.udp_socket);
+            video_info.udp_socket = -1;
+        }
+    xSemaphoreGive(video_info_mutex);
     
     ESP_LOGI(TAG, "Video streaming task ended");
-    video_task_handle = NULL;
-    vTaskDelete(NULL);
 }
 
 esp_err_t video_manager_start_streaming(in_addr_t client_ip)
 {
-    if (video_info.is_streaming) {
-        ESP_LOGW(TAG, "Video streaming already active");
-        return ESP_OK;
-    }
+    xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+    
+        if (video_info.is_streaming) {
+            ESP_LOGW(TAG, "Video streaming already active");
+            xSemaphoreGive(video_info_mutex);
+            return ESP_OK;
+        }
 
-    // Create UDP socket for video streaming
-    video_info.udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (video_info.udp_socket < 0) {
-        ESP_LOGE(TAG, "Failed to create UDP socket for video");
-        return ESP_FAIL;
-    }
+        // Create UDP socket for video streaming
+        video_info.udp_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+        if (video_info.udp_socket < 0) {
+            ESP_LOGE(TAG, "Failed to create UDP socket for video");
+            xSemaphoreGive(video_info_mutex);
+            return ESP_FAIL;
+        }
 
-    // Configure destination address
-    video_info.dest_addr.sin_family = AF_INET;
-    video_info.dest_addr.sin_addr.s_addr = client_ip;
-    video_info.dest_addr.sin_port = htons(VIDEO_UDP_PORT);
-    video_info.remote_addr = client_ip;
+        // Configure destination address
+        video_info.dest_addr.sin_family = AF_INET;
+        video_info.dest_addr.sin_addr.s_addr = client_ip;
+        video_info.dest_addr.sin_port = htons(VIDEO_UDP_PORT);
+        video_info.remote_addr = client_ip;
 
-    video_info.is_streaming = true;
+        video_info.is_streaming = true;
+        video_info.stop_requested = false;
+    
+    xSemaphoreGive(video_info_mutex);
 
     // Convert IP for logging
     char ip_str[INET_ADDRSTRLEN];
@@ -190,13 +208,17 @@ esp_err_t video_manager_start_streaming(in_addr_t client_ip)
         "video_stream",
         4096,  // Stack size
         NULL,  // Parameters
-        4,     // Priority
+        4,     // Priority+
         &video_task_handle
     );
 
     if (task_created != pdPASS) {
         ESP_LOGE(TAG, "Failed to create video streaming task");
-        video_manager_stop_streaming();
+        xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+            video_info.is_streaming = false;
+            close(video_info.udp_socket);
+            video_info.udp_socket = -1;
+        xSemaphoreGive(video_info_mutex);
         return ESP_FAIL;
     }
 
@@ -206,31 +228,30 @@ esp_err_t video_manager_start_streaming(in_addr_t client_ip)
 
 esp_err_t video_manager_stop_streaming(void)
 {
-    if (!video_info.is_streaming) {
-        ESP_LOGW(TAG, "Video streaming not active");
-        return ESP_OK;
-    }
-
-    video_info.is_streaming = false;
-
-    // Wait for streaming task to finish
-    if (video_task_handle != NULL) {
-        // Give the task time to finish naturally
-        for (int i = 0; i < 10 && video_task_handle != NULL; i++) {
-            vTaskDelay(pdMS_TO_TICKS(100));
+    xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+        if (!video_info.is_streaming) {
+            ESP_LOGW(TAG, "Video streaming not active");
+            xSemaphoreGive(video_info_mutex);
+            return ESP_OK;
         }
-        
-        // Force delete if still running
-        if (video_task_handle != NULL) {
-            vTaskDelete(video_task_handle);
-            video_task_handle = NULL;
-        }
+
+        video_info.stop_requested = true;
+
+    xSemaphoreGive(video_info_mutex);
+
+    // Wait for the streaming task to finish
+    bool thread_running = true;
+    while (thread_running) {
+        xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+            thread_running = video_info.is_streaming;
+        xSemaphoreGive(video_info_mutex);
     }
 
-    if (video_info.udp_socket >= 0) {
-        close(video_info.udp_socket);
-        video_info.udp_socket = -1;
-    }
+    xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+        // Destroy the task handle
+        vTaskDelete(video_task_handle);
+        video_task_handle = NULL;
+    xSemaphoreGive(video_info_mutex);
 
     ESP_LOGI(TAG, "Video streaming stopped");
     return ESP_OK;
@@ -238,20 +259,29 @@ esp_err_t video_manager_stop_streaming(void)
 
 esp_err_t video_manager_send_frame(void)
 {
-    if (!video_info.is_streaming) {
-        return ESP_ERR_INVALID_STATE;
-    }
+    // Check streaming state (thread-safe)
+    xSemaphoreTake(video_info_mutex, portMAX_DELAY);
+    
+        if (!video_info.is_streaming) {
+            xSemaphoreGive(video_info_mutex);
+            return ESP_ERR_INVALID_STATE;
+        }
+        
+        // Get next frame ID and increment (thread-safe)
+        uint32_t current_frame_id = video_info.frame_id++;
+        
+        // Copy socket info for use outside mutex
+        int udp_socket = video_info.udp_socket;
+        struct sockaddr_in dest_addr = video_info.dest_addr;
+    
+    xSemaphoreGive(video_info_mutex);
 
+    
     // Capture frame from camera
     camera_fb_t * fb = esp_camera_fb_get();
-    if (!fb) {
-        ESP_LOGE(TAG, "Camera capture failed");
-        return ESP_FAIL;
-    }
 
     // Calculate number of packets needed
     uint32_t total_packets = (fb->len + MAX_VIDEO_DATA_SIZE - 1) / MAX_VIDEO_DATA_SIZE;
-    uint32_t current_frame_id = video_info.frame_id++;
     struct timeval timestamp;
     gettimeofday(&timestamp, NULL); // Get current timestamp
     int64_t time_ms = (int64_t)timestamp.tv_sec * 1000L + (int64_t)timestamp.tv_usec / 1000L;
@@ -284,8 +314,8 @@ esp_err_t video_manager_send_frame(void)
         iov[1].iov_len = packet_data_size;
 
         struct msghdr msg = {
-            .msg_name = &video_info.dest_addr,
-            .msg_namelen = sizeof(video_info.dest_addr),
+            .msg_name = &dest_addr,
+            .msg_namelen = sizeof(dest_addr),
             .msg_iov = iov,
             .msg_iovlen = 2,
             .msg_control = NULL,
@@ -294,24 +324,31 @@ esp_err_t video_manager_send_frame(void)
         };
 
         // Zero-copy transmission
-        int sent = sendmsg(video_info.udp_socket, &msg, 0);
+        int sent = sendmsg(udp_socket, &msg, 0);
+
         
         if (sent < 0) {
+            if (errno == ENOMEM) {
+                uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+                ESP_LOGE(TAG, "Out of memory - Free heap: %" PRIu32 " bytes, Frame size: %zu bytes, Packet %" PRIu32 "/%" PRIu32,
+                         free_heap, fb->len, packet_seq + 1, total_packets);
+            }
             ESP_LOGE(TAG, "Failed to send video packet %" PRIu32 "/%" PRIu32 " (frame %" PRIu32 ") errno: %s",
                       packet_seq + 1, total_packets, current_frame_id, strerror(errno));
             esp_camera_fb_return(fb);
             return ESP_FAIL;
         }
+        uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        // 130000 Value was chosen based on testing
+        // when dropping to around 126KB packets
+        // start being dropped.
+        int delay_ms = (free_heap < 130000) ? 10 : 1;
+        vTaskDelay(pdMS_TO_TICKS(delay_ms)); // Throttle sending rate
     }
 
     // Return the frame buffer back to the driver for reuse
     esp_camera_fb_return(fb);
     return ESP_OK;
-}
-
-bool video_manager_is_streaming(void)
-{
-    return video_info.is_streaming;
 }
 
 void video_manager_cleanup(void)
@@ -320,6 +357,12 @@ void video_manager_cleanup(void)
     
     // Deinitialize camera
     esp_camera_deinit();
+    
+    // Clean up mutex
+    if (video_info_mutex != NULL) {
+        vSemaphoreDelete(video_info_mutex);
+        video_info_mutex = NULL;
+    }
     
     ESP_LOGI(TAG, "Video manager cleaned up");
 }
