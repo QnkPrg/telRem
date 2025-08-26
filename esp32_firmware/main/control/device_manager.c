@@ -1,16 +1,13 @@
 #include "device_manager.h"
 #include "../audio/audio_pipeline_manager.h"
-#include "../peripheral/peripheral_manager.h"
 #include "../video/video_manager.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <errno.h>
 #include <string.h>
 #include "esp_log.h"
-#include "esp_system.h"
 
 static const char *TAG = "DEVICE_MANAGER";
 

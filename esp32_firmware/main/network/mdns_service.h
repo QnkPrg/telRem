@@ -20,7 +20,7 @@ esp_err_t mdns_service_init(void);
  * @param port TCP server port
  * @return ESP_OK on success, error code on failure
  */
-esp_err_t mdns_add_tcp_service(uint16_t port);
+esp_err_t mdns_add_tcp_service(const uint16_t port);
 
 /**
  * @brief Cleanup mDNS service

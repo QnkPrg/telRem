@@ -38,7 +38,7 @@ esp_err_t mdns_service_init(void)
     return ESP_OK;
 }
 
-esp_err_t mdns_add_tcp_service(uint16_t port)
+esp_err_t mdns_add_tcp_service(const uint16_t port)
 {
     ESP_LOGI(TAG, "Adding TCP control service on port %d", port);
     
