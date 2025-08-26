@@ -13,7 +13,7 @@
 static const char *TAG = "VIDEO_MANAGER";
 
 // Video streaming configuration
-#define VIDEO_FPS 20  // Frames per second
+#define VIDEO_FPS 14  // Frames per second
 #define VIDEO_FRAME_INTERVAL_MS (1000 / VIDEO_FPS)
 
 // Global video manager state
@@ -166,6 +166,8 @@ static void video_streaming_task(void *param)
     xSemaphoreGive(video_info_mutex);
     
     ESP_LOGI(TAG, "Video streaming task ended");
+    video_task_handle = NULL;
+    vTaskDelete(NULL);
 }
 
 esp_err_t video_manager_start_streaming(in_addr_t client_ip)
@@ -206,7 +208,7 @@ esp_err_t video_manager_start_streaming(in_addr_t client_ip)
     BaseType_t task_created = xTaskCreate(
         video_streaming_task,
         "video_stream",
-        4096,  // Stack size
+        16384,  // Stack size
         NULL,  // Parameters
         4,     // Priority+
         &video_task_handle
@@ -247,13 +249,6 @@ esp_err_t video_manager_stop_streaming(void)
         xSemaphoreGive(video_info_mutex);
     }
 
-    xSemaphoreTake(video_info_mutex, portMAX_DELAY);
-        // Destroy the task handle
-        vTaskDelete(video_task_handle);
-        video_task_handle = NULL;
-    xSemaphoreGive(video_info_mutex);
-
-    ESP_LOGI(TAG, "Video streaming stopped");
     return ESP_OK;
 }
 
@@ -339,11 +334,6 @@ esp_err_t video_manager_send_frame(void)
             return ESP_FAIL;
         }
         uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        // 130000 Value was chosen based on testing
-        // when dropping to around 126KB packets
-        // start being dropped.
-        int delay_ms = (free_heap < 130000) ? 10 : 1;
-        vTaskDelay(pdMS_TO_TICKS(delay_ms)); // Throttle sending rate
     }
 
     // Return the frame buffer back to the driver for reuse
