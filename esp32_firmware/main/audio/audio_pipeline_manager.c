@@ -101,7 +101,7 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
     i2s_cfg_recv.std_cfg.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_16BIT;
     i2s_cfg_recv.use_alc = true; // Enable ALC for volume control
     i2s_cfg_recv.volume = 30;
-    i2s_cfg_recv.buffer_len = 324;
+    i2s_cfg_recv.buffer_len = 1404;
     i2s_cfg_recv.out_rb_size = 1024;
 
     audio_pipelines_info->i2s_writer = i2s_stream_init(&i2s_cfg_recv);
