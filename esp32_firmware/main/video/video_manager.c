@@ -13,8 +13,8 @@
 static const char *TAG = "VIDEO_MANAGER";
 
 // Video streaming configuration
-#define VIDEO_FPS 14  // Frames per second
-#define VIDEO_FRAME_INTERVAL_MS (1000 / VIDEO_FPS)
+#define VIDEO_FPS 12  // Frames per second
+#define VIDEO_FRAME_INTERVAL_MS ((1000 + VIDEO_FPS/2) / VIDEO_FPS)
 
 // Global video manager state
 static video_manager_info_t video_info = {0};
@@ -149,10 +149,9 @@ static void video_streaming_task(void *param)
         if (should_continue) {
             esp_err_t ret = video_manager_send_frame();
             if (ret != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to send video frame");
-                // Continue trying to send frames
+                ESP_LOGD(TAG, "Failed to send video frame");
             }
-            
+
             vTaskDelay(pdMS_TO_TICKS(VIDEO_FRAME_INTERVAL_MS));
         }
     }
@@ -324,16 +323,16 @@ esp_err_t video_manager_send_frame(void)
         
         if (sent < 0) {
             if (errno == ENOMEM) {
-                uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-                ESP_LOGE(TAG, "Out of memory - Free heap: %" PRIu32 " bytes, Frame size: %zu bytes, Packet %" PRIu32 "/%" PRIu32,
-                         free_heap, fb->len, packet_seq + 1, total_packets);
+                vTaskDelay(pdMS_TO_TICKS(50)); // Back off briefly on memory error
             }
-            ESP_LOGE(TAG, "Failed to send video packet %" PRIu32 "/%" PRIu32 " (frame %" PRIu32 ") errno: %s",
+            ESP_LOGD(TAG, "Failed to send video packet %" PRIu32 "/%" PRIu32 " (frame %" PRIu32 ") errno: %s",
                       packet_seq + 1, total_packets, current_frame_id, strerror(errno));
             esp_camera_fb_return(fb);
             return ESP_FAIL;
         }
-        uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        // Yield to allow network tasks to handle the packages,
+        // to minimize ENOMEM errors when sending
+        taskYIELD();
     }
 
     // Return the frame buffer back to the driver for reuse
