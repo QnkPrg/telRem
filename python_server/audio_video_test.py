@@ -15,12 +15,7 @@ from collections import defaultdict
 current_frame = None
 current_frame_id = None
 frame_condition = threading.Condition()  # Condition variable for frame availability
-try:
-    import cv2
-    VIDEO_DISPLAY_AVAILABLE = True
-except ImportError:
-    VIDEO_DISPLAY_AVAILABLE = False
-    print("OpenCV not available - video will be saved to files instead of displayed")
+import cv2
 
 # ESP32 Command definitions
 class Commands:
@@ -266,17 +261,6 @@ def test_esp32_audio_video(esp32_ip: str):
     """Test ESP32 audio and video streaming with multi-threading"""
     print(f"Testing ESP32 audio and video streaming with {esp32_ip}")
     
-    if VIDEO_DISPLAY_AVAILABLE:
-        print("Video will be displayed in real-time (press 'q' or ESC to stop early)")
-    else:
-        print("Video will be saved to files (OpenCV not available for display)")
-    
-    # Initialize video display window if available
-    video_window_active = False
-    if VIDEO_DISPLAY_AVAILABLE:
-        cv2.namedWindow('ESP32 Video Stream', cv2.WINDOW_AUTOSIZE)
-        video_window_active = True
-    
     # Connect TCP
     tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -397,18 +381,17 @@ def test_esp32_audio_video(esp32_ip: str):
     try:
         while not stop_event.is_set():
             # Handle video frame display in main thread (thread-safe)
-            if VIDEO_DISPLAY_AVAILABLE and video_window_active:
-                with frame_condition:
-                    frame_condition.wait(timeout=0.1)  # 100ms timeout to check stop_event
-                    global current_frame, current_frame_id
-                    if current_frame and current_frame_id:
-                        if not display_frame(current_frame, current_frame_id):
-                            # User pressed 'q' or ESC to quit
-                            print("Video display stopped by user")
-                            stop_event.set()
-                            break
-                    current_frame = None
-                    current_frame_id = None
+            with frame_condition:
+                frame_condition.wait(timeout=0.1)  # 100ms timeout to check stop_event
+                global current_frame, current_frame_id
+                if current_frame and current_frame_id:
+                    if not display_frame(current_frame, current_frame_id):
+                        # User pressed 'q' or ESC to quit
+                        print("Video display stopped by user")
+                        stop_event.set()
+                        break
+                current_frame = None
+                current_frame_id = None
 
             # Print periodic stats
             elapsed = time.time() - start_time
@@ -436,9 +419,8 @@ def test_esp32_audio_video(esp32_ip: str):
     elapsed_time = end_time - start_time
     
     # Cleanup video window if it was opened
-    if video_window_active and VIDEO_DISPLAY_AVAILABLE:
-        cv2.destroyAllWindows()
-        print("Video display window closed")
+    cv2.destroyAllWindows()
+    print("Video display window closed")
     
     # Results
     print(f"\nTest Results:")
@@ -471,17 +453,13 @@ def test_esp32_audio_video(esp32_ip: str):
         print(f"  ESP32 audio performance: {audio_performance:.1f}% of expected rate")
     
     if stats['audio_packets'] == 0:
-        print("No audio packets received - check audio pipeline/I2S")
-        print("   ESP32 may not be capturing audio properly")
+        print("No audio packets received - check connection")
     elif stats['audio_packets'] < expected_audio_rate * 2:
         print("Very low audio rate - ESP32 likely running too slow")
-        print("   Possible causes: CPU overload, memory issues, I2S problems")
     elif stats['audio_packets'] < expected_audio_rate * 4:
         print("Low packet rate - ESP32 may be struggling")
-        print("   Possible causes: Network congestion, buffer issues")
     else:
         print("ESP32 appears to be processing audio at good speed")
-        print("   If you still hear choppy audio, check network or client-side issues")
     
     # Cleanup
     tcp_sock.close()
@@ -492,19 +470,14 @@ def test_esp32_audio_video(esp32_ip: str):
     
     # Report video results
     if stats['completed_frames'] > 0:
-        if VIDEO_DISPLAY_AVAILABLE:
-            print(f"Displayed {stats['completed_frames']} video frames in real-time using separate threads")
-        else:
-            cleanup_old_video_frames()
-            print(f"Video frames saved as received_frame_<frame_id>.jpg using separate threads")
+        print(f"Displayed {stats['completed_frames']} video frames in real-time using separate threads")
 
     return stats['audio_packets'] > 0
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python auto_esp32_test.py <esp32_ip>")
-        print("  Video will be displayed in real-time if OpenCV is available")
-        print("  Press 'q' or ESC in video window to stop early")
+        print("  Press 'q' or ESC in video window to stop")
         sys.exit(1)
     
     esp32_ip = sys.argv[1]
