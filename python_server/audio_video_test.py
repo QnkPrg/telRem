@@ -457,7 +457,6 @@ def test_esp32_audio_video(esp32_ip: str):
         if incomplete_frames > 0:
             print(f"  Incomplete frames: {incomplete_frames}")
     
-    print(f"  Audio packets resent (raw payload): {stats['audio_packets']}")
     print(f"  Audio rate: {stats['audio_packets']/elapsed_time:.1f} packets/sec")
     print(f"  Video rate: {stats['video_packets']/elapsed_time:.1f} packets/sec")
     print(f"  Video frame rate: {stats['completed_frames']/elapsed_time:.1f} frames/sec")
