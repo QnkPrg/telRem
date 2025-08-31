@@ -12,6 +12,5 @@ tfg_project/
 │       ├── network/          # Network communication modules
 │       ├── peripheral/       # Hardware peripheral drivers
 │       └── video/            # Video capture and streaming
-├── python_server/            # Python client applications
-└── utils.sh                 # Build and utility scripts
+└── python_server/            # Python client applications
 ```
