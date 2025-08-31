@@ -81,12 +81,6 @@ esp_err_t video_manager_start_streaming(in_addr_t client_ip);
 esp_err_t video_manager_stop_streaming(void);
 
 /**
- * @brief Capture and send a single frame
- * @return ESP_OK on success, ESP_FAIL on error
- */
-esp_err_t video_manager_send_frame(void);
-
-/**
  * @brief Cleanup video manager resources
  */
 void video_manager_cleanup(void);

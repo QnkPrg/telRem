@@ -12,6 +12,7 @@
 
 static const char *TAG = "VIDEO_MANAGER";
 
+
 // Video streaming configuration
 #define VIDEO_FPS 12  // Frames per second
 #define VIDEO_FRAME_INTERVAL_MS ((1000 + VIDEO_FPS/2) / VIDEO_FPS)
@@ -40,6 +41,14 @@ static SemaphoreHandle_t video_info_mutex = NULL;
 #define CAM_PIN_D0      13  // Data pin 0
 
 const BaseType_t CORE_PIN = 0;
+
+// Forward declaration
+/**
+ * @brief Capture and send a single frame
+ * @return ESP_OK on success, ESP_FAIL on error
+ */
+static esp_err_t _video_manager_send_frame(void);
+
 
 esp_err_t video_manager_init(void)
 {
@@ -134,7 +143,7 @@ esp_err_t video_manager_init(void)
 }
 
 // Video streaming task
-static void video_streaming_task(void *param)
+static void _video_streaming_task(void *param)
 {
     ESP_LOGI(TAG, "Video streaming task started");
     
@@ -147,7 +156,7 @@ static void video_streaming_task(void *param)
         xSemaphoreGive(video_info_mutex);
         
         if (should_continue) {
-            esp_err_t ret = video_manager_send_frame();
+            esp_err_t ret = _video_manager_send_frame();
             if (ret != ESP_OK) {
                 ESP_LOGD(TAG, "Failed to send video frame");
             }
@@ -205,7 +214,7 @@ esp_err_t video_manager_start_streaming(in_addr_t client_ip)
 
     // Create video streaming task
     BaseType_t task_created = xTaskCreate(
-        video_streaming_task,
+        _video_streaming_task,
         "video_stream",
         16384,  // Stack size
         NULL,  // Parameters
@@ -251,7 +260,7 @@ esp_err_t video_manager_stop_streaming(void)
     return ESP_OK;
 }
 
-esp_err_t video_manager_send_frame(void)
+static esp_err_t _video_manager_send_frame(void)
 {
     // Check streaming state (thread-safe)
     xSemaphoreTake(video_info_mutex, portMAX_DELAY);

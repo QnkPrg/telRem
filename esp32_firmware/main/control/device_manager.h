@@ -61,104 +61,11 @@ typedef struct {
 } device_control_t;
 
 /**
- * @brief Initialize device control system
+ * @brief Initialize device management system
  * 
  * @return ESP_OK on success
  */
-esp_err_t device_control_init(void);
-
-/**
- * @brief Main device manager task
- * 
- * This task creates a TCP server that listens for control commands
- * and manages multi-client connections with audio streaming.
- * Audio pipelines are initialized internally for each client.
- * 
- * @param arg Task arguments (unused)
- */
-void device_manager_task(void *arg);
-
-/**
- * @brief Button monitoring task
- * 
- * Monitors button press for WiFi reset functionality
- * 
- * @param arg Task arguments (unused)
- */
-void button_monitor_task(void *arg);
-
-/**
- * @brief Get current device status
- * 
- * @return Current device status
- */
-device_status_t get_device_status(void);
-
-/**
- * @brief Initialize peripheral system
- * 
- * @return ESP_OK on success
- */
-esp_err_t init_peripheral_system(void);
-
-/**
- * @brief Broadcast doorbell ring to all connected clients
- */
-void broadcast_doorbell_ring(void);
-
-/**
- * @brief Request talk permission for a client
- * 
- * @param client_index Index of the client requesting permission
- * @return true if permission granted, false otherwise
- */
-bool request_talk_permission(int client_index);
-
-/**
- * @brief Release talk permission for a client
- * 
- * @param client_index Index of the client releasing permission
- */
-bool release_talk_permission(int client_index);
-
-/**
- * @brief Start audio and video for a specific client
- * 
- * @param client_index Index of the client
- * @return ESP_OK on success
- */
-esp_err_t start_audio_and_video_for_client(int client_index);
-
-/**
- * @brief Clean up a client connection
- * 
- * @param client_index Index of the client to clean up
- */
-void cleanup_client(int client_index);
-
-/**
- * @brief Handle client commands
- * 
- * @param client_index Index of the client
- * @param command Command received from client
- */
-void handle_client_command(int client_index, int command);
-
-/**
- * @brief Client handler task
- * 
- * @param param Pointer to client index
- */
-void client_handler_task(void *param);
-
-/**
- * @brief Add a new client to the system
- * 
- * @param client_sock Client socket
- * @param client_ip Client IP address
- * @return true if client added successfully, false otherwise
- */
-bool add_new_client(int client_sock, uint32_t client_ip);
+esp_err_t device_manager_init(void);
 
 /**
  * @brief Broadcast doorbell ring to all connected clients

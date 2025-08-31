@@ -38,7 +38,6 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
     i2s_cfg_send.std_cfg.clk_cfg.sample_rate_hz = I2S_SAMPLE_RATE;
     i2s_cfg_send.std_cfg.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_16BIT;
     i2s_cfg_send.buffer_len = 324;
-    i2s_cfg_send.out_rb_size = 1024;
     i2s_cfg_send.use_alc = true;      // Enable ALC for volume control
     i2s_cfg_send.volume = 30;         // Boost microphone signal by +40dB for small mic
     audio_pipelines_info->i2s_reader = i2s_stream_init(&i2s_cfg_send);
@@ -81,7 +80,7 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
 
     udp_stream_cfg_t udp_cfg_recv = {
         .type = AUDIO_STREAM_READER,
-        .out_rb_size = 1024,  // Reduce buffer size to minimize latency
+        .out_rb_size = 1024,
         .dest_addr = dest_addr,
         .task_stack = 4096,
         .buffer_len = 1400,
@@ -102,7 +101,6 @@ esp_err_t audio_pipelines_init(struct audio_pipeline_manager_info *audio_pipelin
     i2s_cfg_recv.use_alc = true; // Enable ALC for volume control
     i2s_cfg_recv.volume = 30;
     i2s_cfg_recv.buffer_len = 1404;
-    i2s_cfg_recv.out_rb_size = 1024;
 
     audio_pipelines_info->i2s_writer = i2s_stream_init(&i2s_cfg_recv);
     if (audio_pipelines_info->i2s_writer == NULL) {

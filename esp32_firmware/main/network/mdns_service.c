@@ -51,7 +51,7 @@ esp_err_t mdns_add_tcp_service(const uint16_t port)
     // Add service txt records for TCP control service
     mdns_txt_item_t tcp_txt_data[] = {
         {"version", "1.0"},
-        {"device", "esp32-audio"},
+        {"device", "esp32-audio_video"},
         {"type", "control"},
         {"protocol", "tcp"}
     };

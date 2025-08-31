@@ -12,13 +12,8 @@
 
 static const char *TAG = "UDP_AUDIO_MAIN";
 
-TaskHandle_t main_task_handle = NULL;
-
 void app_main(void) {
     esp_log_level_set("udp_STREAM", ESP_LOG_DEBUG);
-
-    // Set the main task handle for later use
-    main_task_handle = xTaskGetCurrentTaskHandle();
 
     // Initialize NVS with error handling
     ESP_LOGI(TAG, "Initializing NVS...");
@@ -35,8 +30,9 @@ void app_main(void) {
     // Add a small delay to ensure NVS is fully ready
     vTaskDelay(pdMS_TO_TICKS(100));
 
-    // Initialize mDNS service
-    ESP_LOGI(TAG, "Initializing mDNS service..."); 
+    // Initialize peripheral manager
+    ESP_LOGI(TAG, "Initializing peripheral manager...");
+    ESP_ERROR_CHECK(peripheral_manager_init());
 
     // Start WiFi provisioning
     ESP_LOGI(TAG, "Starting WiFi provisioning...");
@@ -45,6 +41,7 @@ void app_main(void) {
     ESP_LOGI(TAG, "WiFi connected successfully!");
 
     // Initialize mDNS service
+    ESP_LOGI(TAG, "Initializing mDNS service..."); 
     ESP_ERROR_CHECK(mdns_service_init());
     // Add TCP service for device control (port 12345)
     ESP_ERROR_CHECK(mdns_add_tcp_service(12345));
@@ -52,10 +49,6 @@ void app_main(void) {
     // Set log levels
     esp_log_level_set("*", ESP_LOG_DEBUG);
     esp_log_level_set("AUDIO_ELEMENT", ESP_LOG_DEBUG);
-
-    // Initialize peripheral manager
-    ESP_LOGI(TAG, "Initializing peripheral manager...");
-    ESP_ERROR_CHECK(peripheral_manager_init());
 
     // Initialize video manager
     ESP_LOGI(TAG, "Initializing video manager...");
@@ -67,10 +60,8 @@ void app_main(void) {
         ESP_LOGI(TAG, "Video manager initialized successfully");
     }
     // Start device manager task
-    xTaskCreate(device_manager_task, "device_manager", 4096, NULL, 2, NULL);
+    device_manager_init();
 
-    // Wait for control task to notify completion
-    while(ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == 0);
+    while(1);
 
-    ESP_LOGI(TAG, "Application finished");
 }

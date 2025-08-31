@@ -36,31 +36,77 @@ typedef struct {
     bool provisioning_complete;
     bool wifi_connected;
     int connection_attempts;
-    bool connection_failed;
     bool provisioning_active;
     bool has_credentials;
 } prov_state_t;
 
-static prov_state_t current_state = {
-    .connection_attempts = 0,
-    .connection_failed = false,
-    .has_credentials = false
-};
+static prov_state_t current_state;
 
 // Forward declarations
+/**
+ * @brief Start WiFi AP mode for provisioning
+ */
 static void _start_ap_mode(void);
+
+/**
+ * @brief Start the HTTP provisioning server
+ * @return ESP_OK on success, ESP_FAIL otherwise
+ */
 static esp_err_t _start_provisioning_server(void);
+
+/**
+ * @brief Stop the HTTP provisioning server
+ */
 static void _stop_provisioning_server(void);
+
+/**
+ * @brief Connect to WiFi using provided credentials
+ * @param credentials Pointer to WiFi credentials structure
+ */
 static void _connect_wifi_with_credentials(const wifi_credentials_t *credentials);
+
+/**
+ * @brief Display WiFi credentials for debugging
+ * @param credentials Pointer to WiFi credentials structure
+ * @return true if credentials are valid, false otherwise
+ */
 static bool _display_wifi_credentials(const wifi_credentials_t *credentials);
+
+/**
+ * @brief Load WiFi credentials from NVS storage
+ * @param credentials Pointer to WiFi credentials structure to fill
+ * @return ESP_OK on success, error code otherwise
+ */
 static esp_err_t _load_wifi_credentials_from_nvs(wifi_credentials_t *credentials);
+
+/**
+ * @brief Save WiFi credentials to NVS storage
+ * @param credentials Pointer to WiFi credentials structure to save
+ * @return ESP_OK on success, error code otherwise
+ */
 static esp_err_t _save_wifi_credentials_to_nvs(const wifi_credentials_t *credentials);
+
+/**
+ * @brief WiFi and IP event handler
+ * @param arg User argument (unused)
+ * @param event_base Event base (WIFI_EVENT or IP_EVENT)
+ * @param event_id Event ID
+ * @param event_data Pointer to event data
+ */
 static void _wifi_event_handler(void* arg, esp_event_base_t event_base,
                        int32_t event_id, void* event_data);
+
+/**
+ * @brief Task to clean up provisioning after connection
+ * @param arg User argument (unused)
+ */
 static void _delayed_provisioning_cleanup(void* arg);
 
 void start_wifi_provisioning(void)
 {
+    /* Initialize current state */
+    memset(&current_state, 0, sizeof(current_state));
+
     /* Initialize the event group */
     wifi_event_group = xEventGroupCreate();
 
@@ -146,46 +192,26 @@ void _wifi_event_handler(void* arg, esp_event_base_t event_base,
 {
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
-            case WIFI_EVENT_STA_START:
-                ESP_LOGI(TAG, "WiFi Station started");
-                break;
             case WIFI_EVENT_STA_DISCONNECTED: {
                 // Ignore disconnect events if we don't have credentials yet
                 if (!current_state.has_credentials) {
-                    ESP_LOGD(TAG, "Ignoring STA disconnect - no credentials configured yet");
                     break;
                 }
-                if(current_state.wifi_connected){
-                    // Lost connection reseting.
-                    esp_restart();
+                if(!current_state.provisioning_active){
+                    // Lost connection or failed to connect to NVS credentials at startup.
+                    ESP_LOGW(TAG, "WiFi disconnected, attempting to reconnect...");
+                    esp_wifi_connect();
+                    break;
                 }
                 
-                current_state.wifi_connected = false;
-                
                 // Check if we've exceeded max attempts
-                // We could also want to reconnect if we were connected before and lost connection
-                if (current_state.connection_attempts >= MAX_CONNECTION_ATTEMPTS && !current_state.wifi_connected) {
+                if (current_state.connection_attempts >= MAX_CONNECTION_ATTEMPTS) {
                     ESP_LOGE(TAG, "Failed to connect after %d attempts. Wrong credentials?", 
                              MAX_CONNECTION_ATTEMPTS);
-                    current_state.connection_failed = true;
-                    
-                    // Start provisioning mode when saved credentials fail
-                    ESP_LOGI(TAG, "Connection failed - starting provisioning mode");
-                    
-                    // Only start provisioning if not already active
-                    if (!current_state.provisioning_active) {
-                        // Start AP mode for provisioning
-                        _start_ap_mode();
-                        
-                        // Start provisioning server
-                        _start_provisioning_server();
-                        
-                        ESP_LOGI(TAG, "Connect to this AP and go to http://192.168.4.1 for provisioning");
-                    } else {
-                        xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
-                        ESP_LOGI(TAG, "Provisioning server already active - credentials failed");
-                    }
-                } else {
+                    xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
+
+                }
+                else {
                     current_state.connection_attempts++;
                     ESP_LOGI(TAG, "Retrying connection (%d/%d)...", 
                              current_state.connection_attempts, MAX_CONNECTION_ATTEMPTS);
@@ -205,6 +231,7 @@ void _wifi_event_handler(void* arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "Connected with IP Address:" IPSTR, IP2STR(&event->ip_info.ip));
+        current_state.connection_attempts = 0;
         current_state.wifi_connected = true;
         current_state.provisioning_complete = true;
         
@@ -249,8 +276,6 @@ static esp_err_t _load_wifi_credentials_from_nvs(wifi_credentials_t *credentials
         ESP_LOGE(TAG, "Failed to open NVS namespace 'wifi_cred': %s", esp_err_to_name(ret));
         return ret;
     }
-    
-    ESP_LOGI(TAG, "NVS namespace 'wifi_cred' opened successfully");
 
     // Get SSID length first
     ret = nvs_get_blob(nvs_handle, "sta.ssid", NULL, &ssid_len);
@@ -296,7 +321,6 @@ static esp_err_t _load_wifi_credentials_from_nvs(wifi_credentials_t *credentials
         ESP_LOGI(TAG, "No WiFi password found in storage - assuming open network");
         credentials->password[0] = '\0'; // Open network
         nvs_close(nvs_handle);
-        ESP_LOGI(TAG, "WiFi credentials loaded: SSID=%s, Password=(none)", credentials->ssid);
         return ESP_OK;
     }
     
@@ -317,9 +341,6 @@ static esp_err_t _load_wifi_credentials_from_nvs(wifi_credentials_t *credentials
     }
     
     nvs_close(nvs_handle);
-    
-    ESP_LOGI(TAG, "WiFi credentials loaded: SSID=%s, Password=%s", 
-             credentials->ssid, (strlen(credentials->password) > 0) ? "***" : "(none)");
     
     return ESP_OK;
 }
@@ -454,9 +475,8 @@ static esp_err_t _config_handler(httpd_req_t *req)
     
     // Reset connection state for new attempt
     current_state.connection_attempts = 0;
-    current_state.connection_failed = false;
     current_state.wifi_connected = false;
-    current_state.has_credentials = true;  // Mark that we now have credentials
+    current_state.has_credentials = true;
 
     ESP_LOGI(TAG, "Received WiFi credentials: SSID=%s, Password=%s", current_state.credentials.ssid, current_state.credentials.password);
 
@@ -492,16 +512,19 @@ static esp_err_t _config_handler(httpd_req_t *req)
     
     const char *response_string = cJSON_Print(response);
     httpd_resp_set_type(req, "application/json");
-    esp_err_t ret = httpd_resp_send(req, response_string, strlen(response_string));
-    
+    if(httpd_resp_send(req, response_string, strlen(response_string)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to send response");
+    }
+
     free((void*)response_string);
     cJSON_Delete(response);
     cJSON_Delete(json);
 
+    vTaskDelay(pdMS_TO_TICKS(2000));
     // Set the event to indicate connection success
     xEventGroupSetBits(wifi_event_group, WIFI_CONNECT_SUCCESS_SENT);
     
-    return ret;
+    return ESP_OK;
 }
 
 static esp_err_t _scan_handler(httpd_req_t *req)
@@ -683,18 +706,13 @@ static bool _display_wifi_credentials(const wifi_credentials_t *credentials)
         return false;
     }
     
-    ESP_LOGI(TAG, "Displaying stored WiFi credentials...");
-    
     /* Display credentials info */
-    ESP_LOGI(TAG, "WiFi credentials found in storage");
     ESP_LOGI(TAG, "SSID: %s", credentials->ssid);
     if (strlen(credentials->password) > 0) {
-        ESP_LOGI(TAG, "Password: %s", credentials->password);
+        ESP_LOGI(TAG, "Password: (Hidden)");
     } else {
         ESP_LOGI(TAG, "Password: (none - open network)");
     }
-    ESP_LOGI(TAG, "SSID length: %d bytes", strlen(credentials->ssid));
-    ESP_LOGI(TAG, "Password length: %d bytes", strlen(credentials->password));
     
     return true;
 }
@@ -705,17 +723,16 @@ static void _connect_wifi_with_credentials(const wifi_credentials_t *credentials
         ESP_LOGE(TAG, "Invalid credentials provided");
         return;
     }
+
+    current_state.connection_attempts = 0;
+    current_state.wifi_connected = false;
+    current_state.has_credentials = true;
     
     // Store credentials in current state for event handler use
     strncpy(current_state.credentials.ssid, credentials->ssid, sizeof(current_state.credentials.ssid) - 1);
     strncpy(current_state.credentials.password, credentials->password, sizeof(current_state.credentials.password) - 1);
     current_state.credentials.ssid[sizeof(current_state.credentials.ssid) - 1] = '\0';
     current_state.credentials.password[sizeof(current_state.credentials.password) - 1] = '\0';
-
-    // Reset connection state
-    current_state.connection_attempts = 0;
-    current_state.connection_failed = false;
-    current_state.wifi_connected = false;
     
     // Configure WiFi
     wifi_config_t wifi_config = {0};
@@ -756,5 +773,4 @@ static void _start_ap_mode(void)
     ESP_ERROR_CHECK(esp_wifi_start());
     
     ESP_LOGI(TAG, "WiFi APSTA started: SSID=%s, Password=%s", ap_config.ap.ssid, ap_config.ap.password);
-    ESP_LOGI(TAG, "Connect to this AP and go to http://192.168.4.1 for provisioning");
 }

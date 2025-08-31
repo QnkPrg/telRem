@@ -11,6 +11,63 @@
 
 static const char *TAG = "DEVICE_MANAGER";
 
+// Forward declarations for static functions
+
+/**
+ * @brief Request talk permission for a client
+ * @param client_index Index of the client requesting permission
+ */
+static bool _request_talk_permission(int client_index);
+
+/**
+ * @brief Release talk permission for a client
+ * @param client_index Index of the client releasing permission
+ */
+static bool _release_talk_permission(int client_index);
+
+/**
+ * @brief Stop audio and video streams
+ */
+static void _stop_audio_and_video(void);
+
+/**
+ * @brief Start audio and video streams for a client
+ * @param client_index Index of the client to start streams for
+ */
+static esp_err_t _start_audio_and_video_for_client(int client_index);
+
+/**
+ * @brief Cleanup resources for a client
+ * @param client_index Index of the client to clean up
+ */
+static void _cleanup_client(int client_index);
+
+/**
+ * @brief Handle a command from a client
+ * @param client_index Index of the client sending the command
+ * @param command Command to handle
+ */
+static void _handle_client_command(int client_index, int command);
+
+/**
+ * @brief Task handler for individual clients
+ * @param param Pointer to client-specific parameters
+ */
+static void _client_handler_task(void *param);
+
+/**
+ * @brief Add a new client to the manager
+ * @param client_sock Socket descriptor for the new client
+ * @param client_ip IP address of the new client
+ */
+static bool _add_new_client(int client_sock, in_addr_t client_ip);
+
+/**
+ * @brief Main device manager task
+ * @param arg Pointer to task-specific arguments
+ */
+static void _device_manager_task(void *arg);
+
 #define MAX_CLIENTS 5
 
 typedef struct {
@@ -20,13 +77,11 @@ typedef struct {
     TaskHandle_t task_handle;
 } tcp_client_t;
 
-extern TaskHandle_t main_task_handle;
-
 // Client management
 static tcp_client_t clients[MAX_CLIENTS];
-static SemaphoreHandle_t clients_mutex;
+static SemaphoreHandle_t clients_mutex = NULL;
 static int active_talker_index = -1;  // -1 means no one talking
-static SemaphoreHandle_t talker_mutex;
+static SemaphoreHandle_t talker_mutex = NULL;
 
 // Global audio pipeline state - shared by all clients, only one can use at a time
 #define INACTIVE_CLIENT_INDEX -1
@@ -37,8 +92,13 @@ typedef struct {
 
 static global_audio_state_t audio_info;
 
-esp_err_t device_control_init(void)
+esp_err_t device_manager_init(void)
 {
+    if(clients_mutex != NULL || talker_mutex != NULL) {
+        ESP_LOGW(TAG, "Device manager already initialized");
+        return ESP_FAIL;
+    }
+
     // Initialize mutexes
     clients_mutex = xSemaphoreCreateMutex();
     talker_mutex = xSemaphoreCreateMutex();
@@ -50,7 +110,13 @@ esp_err_t device_control_init(void)
     
     // Initialize clients array
     memset(clients, 0, sizeof(clients));
-    
+
+    // Initialize global audio pipeline state
+    memset(&audio_info, 0, sizeof(audio_info));
+    audio_info.active_client_index = INACTIVE_CLIENT_INDEX;
+
+    xTaskCreate(_device_manager_task, "device_manager", 4096, NULL, 5, NULL);
+
     return ESP_OK;
 }
 
@@ -69,7 +135,7 @@ void broadcast_doorbell_ring(void) {
 }
 
 // Request talk permission for a client
-bool request_talk_permission(int client_index) {
+static bool _request_talk_permission(int client_index) {
     xSemaphoreTake(talker_mutex, portMAX_DELAY);
         if (active_talker_index == INACTIVE_CLIENT_INDEX) {
             active_talker_index = client_index;
@@ -85,7 +151,7 @@ bool request_talk_permission(int client_index) {
 }
 
 // Release talk permission for a client
-bool release_talk_permission(int client_index) {
+static bool _release_talk_permission(int client_index) {
     bool released = false;
     xSemaphoreTake(talker_mutex, portMAX_DELAY);
         if (active_talker_index == client_index) {
@@ -101,7 +167,7 @@ bool release_talk_permission(int client_index) {
     return released;
 }
 
-void stop_audio_and_video(void) {
+static void _stop_audio_and_video(void) {
             
     // Stop and cleanup audio pipelines
     ESP_LOGI(TAG, "Stopping audio pipelines");
@@ -114,7 +180,7 @@ void stop_audio_and_video(void) {
 }
 
 // Start audio and video for a specific client
-esp_err_t start_audio_and_video_for_client(int client_index) {
+static esp_err_t _start_audio_and_video_for_client(int client_index) {
 
     // Get client IP address
     xSemaphoreTake(clients_mutex, portMAX_DELAY);
@@ -161,15 +227,15 @@ esp_err_t start_audio_and_video_for_client(int client_index) {
 }
 
 // Clean up a client connection
-void cleanup_client(int client_index) {
+static void _cleanup_client(int client_index) {
 
     xSemaphoreTake(talker_mutex, portMAX_DELAY);
         if (active_talker_index == client_index) {
-            stop_audio_and_video();
+            _stop_audio_and_video();
         }
     xSemaphoreGive(talker_mutex);
     
-    release_talk_permission(client_index);
+    _release_talk_permission(client_index);
 
     xSemaphoreTake(clients_mutex, portMAX_DELAY);        
         close(clients[client_index].socket);
@@ -183,14 +249,14 @@ void cleanup_client(int client_index) {
 }
 
 // Handle client commands
-void handle_client_command(int client_index, int command) {
+static void _handle_client_command(int client_index, int command) {
     switch (command) {
         case CMD_REQUEST_TALK:
-            if (request_talk_permission(client_index)) {
+            if (_request_talk_permission(client_index)) {
                 // Grant permission and start audio with this client's IP
                 uint32_t response = CMD_GRANT_TALK;
                 send(clients[client_index].socket, &response, sizeof(response), 0);
-                start_audio_and_video_for_client(client_index);
+                _start_audio_and_video_for_client(client_index);
             } else {
                 uint32_t response = CMD_DENY_TALK;
                 send(clients[client_index].socket, &response, sizeof(response), 0);
@@ -199,10 +265,10 @@ void handle_client_command(int client_index, int command) {
             
         case CMD_END_TALK:
 
-            if(release_talk_permission(client_index)) {
+            if(_release_talk_permission(client_index)) {
                 uint32_t response = CMD_TALK_ENDED;
                 send(clients[client_index].socket, &response, sizeof(response), 0);
-                stop_audio_and_video();
+                _stop_audio_and_video();
             }
             else {
                 ESP_LOGW(TAG, "Failed to release talk permission for client %d", client_index);
@@ -227,7 +293,7 @@ void handle_client_command(int client_index, int command) {
 }
 
 // Client handler task
-void client_handler_task(void *param) {
+static void _client_handler_task(void *param) {
     int client_index = *(int*)param;
     int sock = clients[client_index].socket;
     
@@ -239,16 +305,16 @@ void client_handler_task(void *param) {
         
         if (recv_result > 0) {
             ESP_LOGI(TAG, "Client %d received command: %d", client_index, command);
-            handle_client_command(client_index, command);
+            _handle_client_command(client_index, command);
         } else if (recv_result == 0) {
             // Client disconnected
             ESP_LOGI(TAG, "Client %d disconnected", client_index);
-            cleanup_client(client_index);
+            _cleanup_client(client_index);
             break;
-        } else if (errno != EAGAIN) {
-            // Real error
+        } else {
+            
             ESP_LOGE(TAG, "Client %d receive error: %s", client_index, strerror(errno));
-            cleanup_client(client_index);
+            _cleanup_client(client_index);
             break;
         }
         
@@ -260,7 +326,7 @@ void client_handler_task(void *param) {
 }
 
 // Add a new client to the system
-bool add_new_client(int client_sock, in_addr_t client_ip) {
+static bool _add_new_client(int client_sock, in_addr_t client_ip) {
     xSemaphoreTake(clients_mutex, portMAX_DELAY);
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (!clients[i].is_connected) {
@@ -276,7 +342,7 @@ bool add_new_client(int client_sock, in_addr_t client_ip) {
                 static int client_indices[MAX_CLIENTS];
                 client_indices[i] = i;
                 
-                BaseType_t result = xTaskCreate(client_handler_task, task_name, 4096, 
+                BaseType_t result = xTaskCreate(_client_handler_task, task_name, 4096, 
                                             &client_indices[i], 5, &clients[i].task_handle);
                 
                 if (result == pdPASS) {
@@ -302,16 +368,9 @@ bool add_new_client(int client_sock, in_addr_t client_ip) {
     return false;
 }
 
-void device_manager_task(void *arg)
+static void _device_manager_task(void *arg)
 {
     int tcp_sock = -1;
-    
-    // Initialize device control system
-    ESP_ERROR_CHECK(device_control_init());
-    
-    // Initialize global audio pipeline state
-    memset(&audio_info, 0, sizeof(audio_info));
-    audio_info.active_client_index = INACTIVE_CLIENT_INDEX;
     
     // Create a TCP socket to listen for control commands
     struct sockaddr_in dest_addr = {
@@ -323,7 +382,6 @@ void device_manager_task(void *arg)
     tcp_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (tcp_sock < 0) {
         ESP_LOGE(TAG, "Failed to create TCP socket");
-        xTaskNotifyGive(main_task_handle);
         vTaskDelete(NULL);
     }
     
@@ -334,7 +392,6 @@ void device_manager_task(void *arg)
     if (bind(tcp_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0) {
         ESP_LOGE(TAG, "Failed to bind TCP socket");
         close(tcp_sock);
-        xTaskNotifyGive(main_task_handle);
         vTaskDelete(NULL);
     }
     
@@ -342,7 +399,6 @@ void device_manager_task(void *arg)
     if (listen(tcp_sock, MAX_CLIENTS) < 0) {
         ESP_LOGE(TAG, "Failed to listen on TCP socket");
         close(tcp_sock);
-        xTaskNotifyGive(main_task_handle);
         vTaskDelete(NULL);
     }
     
@@ -365,14 +421,10 @@ void device_manager_task(void *arg)
                  (int)((client_ip >> 8) & 0xFF), (int)(client_ip & 0xFF));
 
         // Try to add the new client
-        if (!add_new_client(client_sock, client_addr.sin_addr.s_addr)) {
+        if (!_add_new_client(client_sock, client_addr.sin_addr.s_addr)) {
             // Max clients reached or error, reject connection
             ESP_LOGW(TAG, "Rejecting connection - max clients reached or error");
             close(client_sock);
         }
     }
-    
-    close(tcp_sock);
-    xTaskNotifyGive(main_task_handle);
-    vTaskDelete(NULL);
 }
