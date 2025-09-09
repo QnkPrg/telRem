@@ -12,10 +12,43 @@
 
 static const char *TAG = "VIDEO_MANAGER";
 
+// Video packet types
+#define VIDEO_PACKAGE 1
+
+// Header field offsets
+#define VIDEO_HEADER_TYPE_OFFSET      0   // Package type (1 byte)
+#define VIDEO_HEADER_FRAME_ID_OFFSET  1   // Frame ID (4 bytes)
+#define VIDEO_HEADER_TIMESTAMP_OFFSET 5   // Timestamp (8 bytes)
+#define VIDEO_HEADER_LENGTH_OFFSET    13  // Packet length (2 bytes)
+#define VIDEO_HEADER_PACKET_SEQ_OFFSET 15 // Packet sequence (2 bytes)
+#define VIDEO_HEADER_TOTAL_PACKETS_OFFSET 17 // Total packets (2 bytes)
+#define VIDEO_HEADER_DATA_OFFSET      19  // Start of data payload
+
+// Header field sizes
+#define VIDEO_HEADER_TYPE_SIZE        1
+#define VIDEO_HEADER_FRAME_ID_SIZE    4
+#define VIDEO_HEADER_TIMESTAMP_SIZE   8
+#define VIDEO_HEADER_LENGTH_SIZE      2
+#define VIDEO_HEADER_PACKET_SEQ_SIZE  2
+#define VIDEO_HEADER_TOTAL_PACKETS_SIZE 2
+
+// Video manager info structure
+typedef struct {
+    bool is_streaming;
+    bool stop_requested;
+    in_addr_t remote_addr;
+    int udp_socket;
+    struct sockaddr_in dest_addr;
+    uint32_t frame_id;         // Frame identifier (increments per frame)
+} video_manager_info_t;
+
 
 // Video streaming configuration
-#define VIDEO_FPS 12  // Frames per second
+#define VIDEO_FPS 15  // Frames per second
 #define VIDEO_FRAME_INTERVAL_MS ((1000 + VIDEO_FPS/2) / VIDEO_FPS)
+// Each frame sent is fragmented into 5/6 packets, and in between frames there is a delay
+// this define is used to compensate for the time taken in sending the packets.
+#define DELAY_COMPENSATION_MS 50
 
 // Global video manager state
 static video_manager_info_t video_info = {0};
@@ -95,34 +128,6 @@ esp_err_t video_manager_init(void)
         return ret;
     }
 
-    // Get camera sensor handle
-    sensor_t * s = esp_camera_sensor_get();
-    if (s != NULL) {
-        // Configure sensor settings for better video quality
-        s->set_brightness(s, 0);     // -2 to 2
-        s->set_contrast(s, 0);       // -2 to 2
-        s->set_saturation(s, 0);     // -2 to 2
-        s->set_special_effect(s, 0); // 0 to 6 (0-No Effect, 1-Negative, 2-Grayscale, 3-Red Tint, 4-Green Tint, 5-Blue Tint, 6-Sepia)
-        s->set_whitebal(s, 1);       // 0 = disable , 1 = enable
-        s->set_awb_gain(s, 1);       // 0 = disable , 1 = enable
-        s->set_wb_mode(s, 0);        // 0 to 4 - if awb_gain enabled (0 - Auto, 1 - Sunny, 2 - Cloudy, 3 - Office, 4 - Home)
-        s->set_exposure_ctrl(s, 1);  // 0 = disable , 1 = enable
-        s->set_aec2(s, 0);           // 0 = disable , 1 = enable
-        s->set_ae_level(s, 0);       // -2 to 2
-        s->set_aec_value(s, 300);    // 0 to 1200
-        s->set_gain_ctrl(s, 1);      // 0 = disable , 1 = enable
-        s->set_agc_gain(s, 0);       // 0 to 30
-        s->set_gainceiling(s, (gainceiling_t)0);  // 0 to 6
-        s->set_bpc(s, 0);            // 0 = disable , 1 = enable
-        s->set_wpc(s, 1);            // 0 = disable , 1 = enable
-        s->set_raw_gma(s, 1);        // 0 = disable , 1 = enable
-        s->set_lenc(s, 1);           // 0 = disable , 1 = enable
-        s->set_hmirror(s, 0);        // 0 = disable , 1 = enable
-        s->set_vflip(s, 0);          // 0 = disable , 1 = enable
-        s->set_dcw(s, 1);            // 0 = disable , 1 = enable
-        s->set_colorbar(s, 0);       // 0 = disable , 1 = enable
-    }
-
     // Initialize video manager state
     memset(&video_info, 0, sizeof(video_info));
     video_info.udp_socket = -1;
@@ -161,7 +166,7 @@ static void _video_streaming_task(void *param)
                 ESP_LOGD(TAG, "Failed to send video frame");
             }
 
-            vTaskDelay(pdMS_TO_TICKS(VIDEO_FRAME_INTERVAL_MS));
+            vTaskDelay(pdMS_TO_TICKS(VIDEO_FRAME_INTERVAL_MS - DELAY_COMPENSATION_MS));
         }
     }
 
@@ -341,7 +346,7 @@ static esp_err_t _video_manager_send_frame(void)
         }
         // Yield to allow network tasks to handle the packages,
         // to minimize ENOMEM errors when sending
-        taskYIELD();
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
     // Return the frame buffer back to the driver for reuse

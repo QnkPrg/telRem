@@ -62,6 +62,9 @@ void app_main(void) {
     // Start device manager task
     device_manager_init();
 
-    while(1);
+    // Main loop can be empty as tasks handle the work
+    while(1) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
 
 }

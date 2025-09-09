@@ -227,9 +227,9 @@ static int _udp_stream_write(audio_element_handle_t self, char *buffer, int len,
     };
 
     if((ret = sendmsg(udp->sock, &msg, 0)) < 0){
-        ESP_LOGE(TAG, "UDP send failed: errno %d (%s) ; len %d", errno,strerror(errno), len);
+        ESP_LOGD(TAG, "UDP send failed: errno %d (%s) ; len %d", errno,strerror(errno), len);
         if(errno == ENOMEM){
-            ESP_LOGW(TAG,"NO MEM %d", len);
+            ESP_LOGD(TAG,"NO MEM %d", len);
             return len; // Pretend success to avoid pipeline errors, discard data
         }
         audio_element_report_status(self, AEL_STATUS_ERROR_OUTPUT);

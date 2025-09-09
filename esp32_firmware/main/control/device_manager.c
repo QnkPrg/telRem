@@ -11,6 +11,20 @@
 
 static const char *TAG = "DEVICE_MANAGER";
 
+/**
+ * @brief Device control commands
+ */
+typedef enum {
+    CMD_REQUEST_TALK = 0,
+    CMD_END_TALK = 1,
+    CMD_GRANT_TALK = 2,
+    CMD_DENY_TALK = 3,
+    CMD_TALK_ENDED = 4,
+    CMD_TALK_DID_NOT_END = 5,
+    CMD_DOORBELL_RING = 6,
+    CMD_OPEN_DOOR = 7
+} device_command_t;
+
 // Forward declarations for static functions
 
 /**
@@ -67,8 +81,6 @@ static bool _add_new_client(int client_sock, in_addr_t client_ip);
  * @param arg Pointer to task-specific arguments
  */
 static void _device_manager_task(void *arg);
-
-#define MAX_CLIENTS 5
 
 typedef struct {
     int socket;

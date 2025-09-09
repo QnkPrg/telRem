@@ -66,7 +66,7 @@ def parse_video_header(data):
     
     return header_info, video_data
 
-def parse_udp_header(data):
+def parse_audio_header(data):
     """Parse UDP packet header and return header info and audio data"""
     
     packet_type, seq_num, timestamp, length = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
@@ -81,28 +81,6 @@ def parse_udp_header(data):
     }
 
     return header_info, audio_data
-
-def create_udp_packet(packet_type, sequence, timestamp, length, audio_data):
-    """Create UDP packet with proper header"""
-    header = struct.pack(HEADER_FORMAT, packet_type, sequence, timestamp, length)
-    return header + audio_data
-
-def cleanup_old_video_frames(max_frames=50):
-    """Clean up old video frame files to prevent disk space issues"""
-    try:
-        import glob
-        frame_files = glob.glob("received_frame_*.jpg")
-        if len(frame_files) > max_frames:
-            # Sort by modification time and keep only the newest frames
-            frame_files.sort(key=lambda x: os.path.getmtime(x))
-            for old_file in frame_files[:-max_frames]:
-                try:
-                    os.remove(old_file)
-                except OSError:
-                    pass
-            print(f"Cleaned up {len(frame_files) - max_frames} old video frames")
-    except Exception as e:
-        print(f"Failed to clean up old frames: {e}")
 
 def queue_video_frame_for_display(frame_data, frame_id):
     """Set current frame for main thread display (thread-safe)"""
@@ -171,7 +149,7 @@ def audio_processing_thread(udp_recv, udp_send, esp32_ip, stats, stop_event):
             data, addr = udp_recv.recvfrom(CHUNK_SIZE + HEADER_SIZE + 50)
             
             # Parse the header and extract audio data
-            header_info, audio_data = parse_udp_header(data)
+            header_info, audio_data = parse_audio_header(data)
             
             if header_info is None:
                 continue
